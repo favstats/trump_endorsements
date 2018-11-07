@@ -1,0 +1,258 @@
+---
+title: "Trump Endorsements"
+output: github_document
+---
+
+Data Sources:
+
+https://www.mcclatchydc.com/news/politics-government/election/midterms/article221145845.html
+
+https://www.politico.com/story/2018/11/07/2018-election-results-trump-endorsements-967767
+
+## Packages
+
+```{r}
+# devtools::install_github("favstats/tidytemplate")
+# install.packages("pacman")
+pacman::p_load(tidyverse, rvest, qdapRegex, ggthemes, tidytemplate, rtweet)
+```
+
+## Including Plots
+
+```{r}
+candidate <- read_html("https://www.mcclatchydc.com/news/politics-government/election/midterms/article221145845.html") %>% 
+  html_nodes("#content-body- li") %>% 
+  html_text()
+
+mcclatch <- tibble(candidate) %>% 
+    mutate(won = case_when(
+        str_detect(candidate, "✓") ~ "Won", 
+        str_detect(candidate, "✗") ~ "Lost", 
+        T~ "Undecided")) %>% 
+    mutate(type = case_when(
+        str_detect(candidate, "House") ~ "House", 
+        str_detect(candidate, "Senate|senator") ~ "Senate", 
+        str_detect(candidate, "governor|gubernatorial") ~ "Governor")) %>% 
+    mutate(incumbent = ifelse(str_detect(candidate, "incumbent|Incumbent"), "Incumbent", "Not Incumbent")) %>% 
+    mutate(candidate = str_remove(candidate, "✓|✗") %>% str_trim()) %>% 
+    mutate(candidate = str_extract(candidate, ".+?(?=,)")) %>% 
+    mutate(candidate = str_remove(candidate, "\\(GOING TO RECOUNT\\) ")) %>% 
+    mutate(candidate = str_remove(candidate, "Runoff: "))
+
+mcclatch
+```
+
+
+
+```{r pressure, echo=FALSE}
+politico_html <- read_html("https://www.politico.com/interactives/charts/chartwerk/zlncpz04.html?initialWidth=658&childId=chartwerk_zlncpz04&parentTitle=Trump%20said%20his%20name%20was%20on%20the%20ballot.%20Here%E2%80%99s%20how%20he%20fared.%20-%20POLITICO&parentUrl=https%3A%2F%2Fwww.politico.com%2Fstory%2F2018%2F11%2F07%2F2018-election-results-trump-endorsements-967767")
+  
+relevant_region <- politico_html %>% html_nodes("body") %>% 
+  as.character() %>% 
+  rm_between("%", "Trump report card", extract=TRUE) %>% 
+  .[[1]] %>% 
+  str_split("\\)") %>% 
+  .[[1]]
+
+candidate_names <- relevant_region %>% 
+  str_split("Candidates") %>% 
+  sapply(`[`,2) %>% 
+  str_sub(5)
+
+candidate_info <- relevant_region %>% 
+  str_split("Candidates") %>% 
+  sapply(`[`,1)  %>% 
+  str_remove_all("[^[:alnum:] ]")
+
+politico <- tibble(candidate_names, candidate_info) %>% 
+  mutate(won = case_when(
+        str_detect(candidate_info, "Won X") ~ "Won", 
+        str_detect(candidate_info, "Lost X") ~ "Lost", 
+        T ~ "Undecided")) %>% 
+  mutate(type = case_when(
+        str_detect(candidate_names, "House") ~ "House", 
+        str_detect(candidate_names, "Senate|senator") ~ "Senate", 
+        str_detect(candidate_names, "Gov") ~ "Governor")) %>% 
+  mutate(candidate = str_extract(candidate_names, ".+?(?=\\()") %>% str_trim) %>% 
+  select(candidate, everything(), -candidate_names, -candidate_info) %>% 
+  drop_na()
+  
+politico
+```
+
+## Checking for Missings/Errors/Disagreements between Data Sources
+
+Let's merge the datasets and see if we find any errors.
+
+```{r}
+politico %>% 
+  full_join(mcclatch, by = "candidate") %>% 
+  filter(is.na(won.x) | is.na(won.y))
+```
+
+Politico misspelled Patrick Morrisey.
+
+Politico has more candidates but they did not include Mike Kelly.
+
+Fix:
+
+```{r}
+politico <- politico %>% 
+  mutate(candidate = ifelse(candidate == "Patrick Morrissey", "Patrick Morrisey", candidate))
+```
+
+
+Do the datasets disagree on whether the candidate ran for House or Senate?
+
+```{r}
+politico %>% 
+  left_join(mcclatch, by = "candidate") %>% 
+  filter(type.x != type.y)
+```
+
+Politico states that Martha McSally ran for the House of Representatives but this information seems to be wrong. She ran for Senate.
+
+-> https://mcsallyforsenate.com/
+
+Fix:
+
+```{r}
+politico <- politico %>% 
+  mutate(type = ifelse(candidate ==  "Martha McSally", "Senate", type)) 
+```
+
+
+Do the datasets disagree on whether a race was lost/won?
+
+```{r}
+politico %>% 
+  left_join(mcclatch, by = "candidate") %>% 
+  filter(won.x != won.y)
+```
+
+Politico seems to not have updated Mike Dunleavy's win yet (via The Associated Press).
+
+Data sources disagree on Diane Harkey. She is indeed projected to lose (via The Associated Press).
+
+Rick Scott is in the lead in the Senate Race (via The Associated Press).
+
+Data sources also disagree on Claudia Tenney. Probably lost the race (via The Associated Press).
+
+Fix:
+
+```{r}
+politico <- politico %>% 
+  mutate(won = ifelse(candidate == "Diane Harkey", "Lost", won)) %>% 
+  mutate(won = ifelse(candidate == "Mike Dunleavy", "Won", won))  %>% 
+  mutate(won = ifelse(candidate == "Rick Scott", "Won", won))  
+
+mcclatch <- mcclatch %>% 
+  mutate(won = ifelse(candidate == "Claudia Tenney", "Lost", won)) 
+```
+
+No errors left :)
+
+We can now use the Politico dataset as base, as it is the most complete dataset:
+
+```{r}
+trump_endorsements <- politico  %>% 
+  left_join(mcclatch, by = "candidate") %>% 
+  rename(results = won.x) %>% 
+  rename(type = type.x) %>% 
+  select(candidate, results, type, incumbent) %>% 
+  arrange(candidate)
+
+trump_endorsements
+```
+
+## @GissiSim Data
+
+@GissiSim on Twitter collected some Trump Endorsements as well. Let's check them out:
+
+```{r, eval = F}
+token <- readRDS(".rtweet.rds")
+
+tml <- get_timelines("GissiSim", n = 500, token = token)
+
+
+
+save_it(tml)
+```
+
+
+```{r}
+tml <- load_it("data/tml.Rdata")
+
+lastnames <- trump_endorsements %>% 
+  mutate(lastname = str_remove(candidate, ".+?(?= )") %>% str_trim) %>% 
+  .$lastname %>% paste0(collapse = "|")
+
+tml %>% 
+  filter(str_detect(text, "lost")) %>% 
+  filter(!(str_detect(text, "Please let me know|That's 31|15 Trump|lost souls|democracy lost"))) %>%
+  select(screen_name, text) %>% 
+  mutate(lastnames = str_detect(text, lastnames)) %>% 
+  filter(!(lastnames))
+```
+
+
+Karen Handel is not in the dataset but did receive an endorsement in 2017.
+
+Randy is the first name of Randy Hultgren who is already in dataset.
+
+Fix:
+
+
+```{r}
+trump_endorsements <- trump_endorsements %>% 
+  rbind(c("Karen Handel", "Lost", "House", "Incumbent"))
+
+save_it(trump_endorsements)
+```
+
+## Plotting the Data
+
+Let's plot the data now :)
+
+```{r, fig.width=10, fig.height=6}
+gg_dat <- trump_endorsements %>% 
+  group_by(results, type) %>% 
+  tally() %>% 
+  ungroup()%>% 
+  group_by(type) %>% 
+  mutate(total = sum(n)) %>% 
+  ungroup() 
+
+gg_text <- gg_dat %>% 
+  filter(results == "Won") %>% 
+  mutate(perc = tidytemplate::get_percentage(n, total, 2)) %>% 
+  mutate(text = paste0(n, " out of ", total, " won (", perc,"%)"))
+
+gg_dat %>% 
+  ggplot(aes(results, n, fill = results)) +
+  geom_col(alpha = 0.75) +
+  facet_wrap(~type) +
+  theme_hc() +
+  scale_fill_colorblind() +
+  guides(fill = F) +
+  labs(x = "", y = "",
+       caption = "Data: Politico & McClatchy Articles and Gissur Simonarson (@GissiSim)\nfavstats.eu; @favstats") +
+  geom_text(aes(label = n), nudge_y = 1) +
+  geom_text(data = gg_text, aes(x = 1.5, y = 31, label = text)) +
+  ggtitle("How did Candidates endorsed by Trump fare in the 2018 Midterm Elections?\n")  +
+  theme(legend.text = element_text(size = 8),
+    axis.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0),
+    plot.caption = element_text(size = 10),
+    legend.position = "bottom",
+    legend.title = element_text(size = 8), 
+    ) 
+
+ggsave_it(gg_freqs, width = 10, height = 6)
+```
+
+
+
+
+
+
