@@ -294,3 +294,47 @@ gg_dat %>%
 ``` r
 ggsave_it(gg_freqs, width = 10, height = 6)
 ```
+
+Plot by incumbents:
+
+``` r
+gg_dat2 <- trump_endorsements %>% 
+  group_by(results, incumbent) %>% 
+  tally() %>% 
+  ungroup()%>% 
+  group_by(incumbent) %>% 
+  mutate(total = sum(n)) %>% 
+  ungroup() %>% 
+  drop_na(incumbent)
+
+gg_text2 <- gg_dat2 %>% 
+  filter(results == "Won") %>% 
+  mutate(perc = tidytemplate::get_percentage(n, total, 2)) %>% 
+  mutate(text = paste0(n, " out of ", total, " won (", perc,"%)"))
+
+gg_dat2 %>% 
+  ggplot(aes(results, n, fill = results)) +
+  geom_col(alpha = 0.75) +
+  facet_wrap(~incumbent) +
+  theme_hc() +
+  scale_fill_colorblind() +
+  guides(fill = F) +
+  labs(x = "", y = "",
+       caption = "Data: Politico & McClatchy Articles and Gissur Simonarson (@GissiSim)\nfavstats.eu; @favstats") +
+  geom_text(aes(label = n), nudge_y = 1) +
+#  geom_text(data = gg_text2, aes(x = 1.5, y = 31, label = text)) +
+  ggtitle("How did Candidates endorsed by Trump fare in the 2018 Midterm Elections?\n")  +
+  theme(legend.text = element_text(size = 8),
+    axis.title = element_text(size = 10, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0),
+    plot.caption = element_text(size = 10),
+    legend.position = "bottom",
+    legend.title = element_text(size = 8), 
+    ) 
+```
+
+![](trump_endorsements_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+
+``` r
+ggsave_it(gg_freqs2, width = 10, height = 6)
+```
